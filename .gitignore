@@ -1,0 +1,12 @@
+.env
+.venv/
+.test-venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+dist/
+.idea/
+.vscode/
+coverage/
+*.sqlite3
