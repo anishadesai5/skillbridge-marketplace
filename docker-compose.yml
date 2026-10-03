@@ -16,6 +16,8 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://skillbridge:skillbridge_dev@db:5432/skillbridge}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-before-deployment}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-60}
     ports: ["8000:8000"]
     depends_on:
       db: {condition: service_healthy}

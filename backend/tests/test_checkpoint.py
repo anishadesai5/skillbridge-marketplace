@@ -15,7 +15,7 @@ def test_customer_can_discover_published_provider(client):
     assert providers[0]["packages"][0]["title"] == "UX Review"
 
 
-def test_customer_can_create_booking_with_simulated_payment_hold(client):
+def test_customer_can_create_booking_with_simulated_payment_hold(client,customer_headers):
     providers = client.get("/providers").json()
     package_id = providers[0]["packages"][0]["id"]
     response = client.post(
@@ -25,14 +25,14 @@ def test_customer_can_create_booking_with_simulated_payment_hold(client):
             "package_id": package_id,
             "booking_date": str(date.today() + timedelta(days=3)),
             "total": "450.00",
-        },
+        },headers=customer_headers,
     )
     assert response.status_code == 201
     assert response.json()["payment_held"] is True
     assert response.json()["status"] == "Pending"
 
 
-def test_booking_rejects_price_mismatch(client):
+def test_booking_rejects_price_mismatch(client,customer_headers):
     providers = client.get("/providers").json()
     response = client.post(
         "/bookings",
@@ -41,7 +41,35 @@ def test_booking_rejects_price_mismatch(client):
             "package_id": providers[0]["packages"][0]["id"],
             "booking_date": str(date.today() + timedelta(days=3)),
             "total": "1.00",
-        },
+        },headers=customer_headers,
     )
     assert response.status_code == 422
     assert "equal the package price" in response.json()["detail"]
+
+
+def test_customer_registration_returns_token(client):
+    response=client.post("/auth/register",json={"email":"new.customer@example.test","password":"Customer456!","role":"customer","first_name":"New","last_name":"Customer"})
+    assert response.status_code==201
+    assert response.json()["user"]["role"]=="customer"
+    assert response.json()["access_token"]
+
+
+def test_login_rejects_bad_password(client):
+    response=client.post("/auth/login",json={"email":"customer@example.test","password":"wrong-password"})
+    assert response.status_code==401
+
+
+def test_provider_cannot_access_admin_route(client,provider_headers):
+    response=client.get("/admin/providers/pending",headers=provider_headers)
+    assert response.status_code==403
+
+
+def test_admin_can_approve_pending_provider(client,admin_headers):
+    registration=client.post("/auth/register",json={"email":"pending.provider@example.test","password":"Provider456!","role":"provider","first_name":"Pending","last_name":"Provider"})
+    provider_token=registration.json()["access_token"]
+    profile=client.get("/providers/me",headers={"Authorization":f"Bearer {provider_token}"}).json()
+    client.post("/providers/me/credentials",headers={"Authorization":f"Bearer {provider_token}"},json={"credential_type":"Certificate","document_url":"https://example.test/certificate"})
+    response=client.post(f"/admin/providers/{profile['id']}/decision",headers=admin_headers,json={"decision":"approve"})
+    assert response.status_code==200
+    assert response.json()["published"] is True
+    assert response.json()["status"]=="Approved"
