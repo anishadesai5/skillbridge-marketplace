@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 from app.models import Role
@@ -11,12 +11,25 @@ class ProviderOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
     id:int; first_name:str; last_name:str; bio:str|None; portfolio_url:str|None; rating:Decimal; packages:list[PackageOut]=[]
 
+class ServiceListingOut(BaseModel):
+    package_id:int
+    provider_id:int
+    provider_name:str
+    provider_rating:Decimal
+    category:str
+    title:str
+    description:str
+    price:Decimal
+    duration_days:int
+
 class BookingCreate(BaseModel):
-    customer_id:int; package_id:int; booking_date:date; total:Decimal=Field(gt=0)
+    package_id:int
+    booking_date:date
+    customer_notes:str|None=Field(default=None,max_length=2000)
 
 class BookingOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
-    id:int; customer_id:int; provider_id:int; package_id:int; status:str; booking_date:date; payment_held:bool; total:Decimal
+    id:int; customer_id:int; provider_id:int; package_id:int; status:str; booking_date:date; payment_held:bool; total:Decimal; customer_notes:str|None; created_at:datetime
 
 class HealthOut(BaseModel):
     status:str; database:str; payment_mode:str

@@ -13,6 +13,10 @@ CS 701 implementation of the SkillBridge independent service provider marketplac
 - Registration, login, password hashing, and bearer-token authentication
 - Customer, provider, and administrator route protection
 - Provider profile submission and administrator approval
+- Searchable service listings with category, price, rating, and keyword filters
+- Approved provider detail pages and active package display
+- Authenticated booking requests with server-calculated pricing
+- Customer booking history with persisted Pending status
 
 The application does not collect, hold, or transfer real funds. All charges, commissions, and payouts are simulated ledger records.
 
@@ -54,15 +58,15 @@ cd backend
 pytest
 ```
 
-## Demo accounts
+## Seeded demonstration data
 
-| Role | Email | Password |
-|---|---|---|
-| Customer | `jordan.customer@example.test` | `Customer123!` |
-| Provider | `maya.provider@example.test` | `Provider123!` |
-| Administrator | `admin@skillbridge.test` | `Admin123!` |
+| Role | Email |
+|---|---|
+| Customer | `jordan.customer@example.test` |
+| Provider | `maya.provider@example.test` |
+| Administrator | `admin@skillbridge.test` |
 
-These accounts are for local demonstrations only. Change `JWT_SECRET` before using the application outside the local course environment.
+Seeded accounts use generated passwords so credentials are never committed. For the customer booking demo, create a customer account from the registration screen. Change `JWT_SECRET` before using the application outside the local course environment.
 
 ## Authentication and approval endpoints
 
@@ -74,6 +78,13 @@ These accounts are for local demonstrations only. Change `JWT_SECRET` before usi
 - `GET /admin/providers/pending`
 - `POST /admin/providers/{provider_id}/decision`
 
+## Customer search and booking endpoints
+
+- `GET /services`
+- `GET /providers/{provider_id}`
+- `POST /bookings` (customer only)
+- `GET /customers/me/bookings` (customer only)
+
 ## Design traceability
 
-See `docs/design-traceability.md`, `docs/database-model.md`, `docs/checkpoint-acceptance.md`, `docs/migrations-and-seed-data.md`, `docs/authentication-and-roles.md`, `docs/provider-approval-workflow.md`, and `docs/checkpoint-demo-script.md`.
+See `docs/design-traceability.md`, `docs/database-model.md`, `docs/checkpoint-acceptance.md`, `docs/migrations-and-seed-data.md`, `docs/authentication-and-roles.md`, `docs/provider-approval-workflow.md`, `docs/customer-search-and-booking.md`, and `docs/checkpoint-demo-script.md`.

@@ -47,6 +47,8 @@ class Booking(Base):
     __tablename__="booking"; __table_args__=(CheckConstraint("total > 0",name="ck_booking_total_positive"),)
     id: Mapped[int]=mapped_column(primary_key=True); customer_id: Mapped[int]=mapped_column(ForeignKey("customer.id")); provider_id: Mapped[int]=mapped_column(ForeignKey("provider.id")); package_id: Mapped[int]=mapped_column(ForeignKey("service_package.id"))
     status: Mapped[BookingStatus]=mapped_column(Enum(BookingStatus),default=BookingStatus.PENDING); booking_date: Mapped[date]=mapped_column(Date); payment_held: Mapped[bool]=mapped_column(Boolean,default=True); total: Mapped[Decimal]=mapped_column(Numeric(12,2))
+    customer_notes: Mapped[str|None]=mapped_column(Text,nullable=True)
+    created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
     milestones=relationship("Milestone",cascade="all, delete-orphan")
 
 class Milestone(Base):

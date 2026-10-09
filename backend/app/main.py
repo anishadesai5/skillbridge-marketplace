@@ -1,10 +1,12 @@
+from decimal import Decimal
+
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
 from app.db import get_db
-from app.models import Administrator, Credential, Customer, Provider, Role, ServicePackage, UserAccount
-from app.schemas import BookingCreate, BookingOut, CredentialCreate, CredentialOut, HealthOut, LoginRequest, ProviderAdminOut, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, TokenOut, UserOut
+from app.models import Administrator, Booking, Credential, Customer, Provider, Role, ServicePackage, UserAccount
+from app.schemas import BookingCreate, BookingOut, CredentialCreate, CredentialOut, HealthOut, LoginRequest, ProviderAdminOut, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
 from app.security import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from app.services import create_booking, publish_provider
 
@@ -15,11 +17,47 @@ app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:5173"],allow_
 def health(db:Session=Depends(get_db)):
     db.execute(text("select 1"));return {"status":"ok","database":"connected","payment_mode":"simulated"}
 
+def public_provider(provider:Provider)->ProviderOut:
+    return ProviderOut(
+        id=provider.id,first_name=provider.first_name,last_name=provider.last_name,
+        bio=provider.bio,portfolio_url=provider.portfolio_url,rating=provider.rating,
+        packages=[package for package in provider.packages if package.active],
+    )
+
 @app.get("/providers",response_model=list[ProviderOut])
 def providers(category:str|None=Query(default=None),db:Session=Depends(get_db)):
-    result=db.scalars(select(Provider).where(Provider.published.is_(True)).options(selectinload(Provider.packages))).unique().all()
-    if category:result=[p for p in result if any(x.active and x.category.lower()==category.lower() for x in p.packages)]
-    return result
+    result=db.scalars(select(Provider).where(Provider.published.is_(True),Provider.status=="Approved").options(selectinload(Provider.packages))).unique().all()
+    if category:result=[p for p in result if any(x.active and x.category.lower()==category.strip().lower() for x in p.packages)]
+    return [public_provider(provider) for provider in result]
+
+@app.get("/providers/{provider_id:int}",response_model=ProviderOut)
+def provider_detail(provider_id:int,db:Session=Depends(get_db)):
+    provider=db.scalar(select(Provider).where(Provider.id==provider_id,Provider.published.is_(True),Provider.status=="Approved").options(selectinload(Provider.packages)))
+    if not provider:raise HTTPException(404,"Provider not found")
+    return public_provider(provider)
+
+@app.get("/services",response_model=list[ServiceListingOut])
+def services(
+    q:str|None=Query(default=None,max_length=100),
+    category:str|None=Query(default=None,max_length=100),
+    min_price:Decimal|None=Query(default=None,ge=0),
+    max_price:Decimal|None=Query(default=None,ge=0),
+    min_rating:Decimal|None=Query(default=None,ge=0,le=5),
+    db:Session=Depends(get_db),
+):
+    if min_price is not None and max_price is not None and min_price>max_price:raise HTTPException(422,"Minimum price cannot exceed maximum price")
+    statement=select(ServicePackage,Provider).join(Provider,Provider.id==ServicePackage.provider_id).where(ServicePackage.active.is_(True),Provider.published.is_(True),Provider.status=="Approved")
+    if category:statement=statement.where(ServicePackage.category.ilike(category.strip()))
+    if min_price is not None:statement=statement.where(ServicePackage.price>=min_price)
+    if max_price is not None:statement=statement.where(ServicePackage.price<=max_price)
+    if min_rating is not None:statement=statement.where(Provider.rating>=min_rating)
+    rows=db.execute(statement.order_by(Provider.rating.desc(),ServicePackage.price.asc())).all()
+    needle=q.strip().lower() if q else None
+    listings=[]
+    for package,provider in rows:
+        if needle and needle not in f"{package.title} {package.description} {provider.first_name} {provider.last_name}".lower():continue
+        listings.append(ServiceListingOut(package_id=package.id,provider_id=provider.id,provider_name=f"{provider.first_name} {provider.last_name}",provider_rating=provider.rating,category=package.category,title=package.title,description=package.description,price=package.price,duration_days=package.duration_days))
+    return listings
 
 @app.post("/auth/register",response_model=TokenOut,status_code=201)
 def register(payload:RegisterRequest,db:Session=Depends(get_db)):
@@ -87,9 +125,15 @@ def decide_provider(provider_id:int,payload:ProviderDecision,user:UserAccount=De
 @app.post("/bookings",response_model=BookingOut,status_code=201)
 def bookings(payload:BookingCreate,user:UserAccount=Depends(require_roles(Role.CUSTOMER)),db:Session=Depends(get_db)):
     customer=db.scalar(select(Customer).where(Customer.user_id==user.id))
-    if not customer or customer.id!=payload.customer_id:raise HTTPException(403,"Customers can only create their own bookings")
+    if not customer:raise HTTPException(404,"Customer profile not found")
     package=db.get(ServicePackage,payload.package_id)
     if not package:raise HTTPException(404,"Service package not found")
-    try:booking=create_booking(db,payload.customer_id,package,payload.booking_date,payload.total)
+    try:booking=create_booking(db,customer.id,package,payload.booking_date,payload.customer_notes)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
     db.commit();db.refresh(booking);return booking
+
+@app.get("/customers/me/bookings",response_model=list[BookingOut])
+def customer_bookings(user:UserAccount=Depends(require_roles(Role.CUSTOMER)),db:Session=Depends(get_db)):
+    customer=db.scalar(select(Customer).where(Customer.user_id==user.id))
+    if not customer:raise HTTPException(404,"Customer profile not found")
+    return db.scalars(select(Booking).where(Booking.customer_id==customer.id).order_by(Booking.created_at.desc())).all()
