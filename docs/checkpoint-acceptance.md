@@ -22,7 +22,11 @@ A customer can request an active package for a future date. The database stores 
 
 ## AC-06 Milestone allocation
 
-A booking with milestones is valid only when allocations total 100 percent. Each milestone sequence is unique inside that booking.
+A provider can save or replace milestones while an assigned booking is Pending or Confirmed. The batch is accepted only when allocations total exactly 100 percent and each sequence is unique inside that booking. A booking cannot become Active without a valid milestone plan and cannot become Completed until every milestone is Approved.
+
+## AC-06A Booking state validation
+
+The API permits only `Pending -> Confirmed -> Active -> Completed`, plus cancellation from a nonterminal state. It rejects skipped, repeated, reversed, or post-terminal transitions. Only the assigned provider may confirm, start, or complete a booking; only its customer may cancel it.
 
 ## AC-07 Role protection
 

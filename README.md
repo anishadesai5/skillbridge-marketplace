@@ -17,6 +17,8 @@ CS 701 implementation of the SkillBridge independent service provider marketplac
 - Approved provider detail pages and active package display
 - Authenticated booking requests with server-calculated pricing
 - Customer booking history with persisted Pending status
+- Validated booking lifecycle from Pending through Completed or Cancelled
+- Provider-defined milestones with unique sequences and exact 100% allocation
 
 The application does not collect, hold, or transfer real funds. All charges, commissions, and payouts are simulated ledger records.
 
@@ -85,6 +87,14 @@ Seeded accounts use generated passwords so credentials are never committed. For 
 - `POST /bookings` (customer only)
 - `GET /customers/me/bookings` (customer only)
 
+## Booking state and milestone endpoints
+
+- `GET /bookings/{booking_id}` (booking customer, provider, or administrator)
+- `PATCH /bookings/{booking_id}/status` (authorized customer or provider)
+- `PUT /bookings/{booking_id}/milestones` (assigned provider only)
+
+The normal lifecycle is `Pending -> Confirmed -> Active -> Completed`. A customer may cancel an eligible booking, but terminal states cannot be changed. Milestone allocations must total exactly 100 percent before work can start, and every milestone must be approved before a booking can be completed.
+
 ## Design traceability
 
-See `docs/design-traceability.md`, `docs/database-model.md`, `docs/checkpoint-acceptance.md`, `docs/migrations-and-seed-data.md`, `docs/authentication-and-roles.md`, `docs/provider-approval-workflow.md`, `docs/customer-search-and-booking.md`, and `docs/checkpoint-demo-script.md`.
+See `docs/design-traceability.md`, `docs/database-model.md`, `docs/checkpoint-acceptance.md`, `docs/migrations-and-seed-data.md`, `docs/authentication-and-roles.md`, `docs/provider-approval-workflow.md`, `docs/customer-search-and-booking.md`, `docs/booking-state-and-milestones.md`, and `docs/checkpoint-demo-script.md`.

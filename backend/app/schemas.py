@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
-from pydantic import BaseModel, ConfigDict, Field
-from app.models import Role
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.models import BookingStatus, MilestoneStatus, Role
 
 class PackageOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
@@ -30,6 +30,42 @@ class BookingCreate(BaseModel):
 class BookingOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
     id:int; customer_id:int; provider_id:int; package_id:int; status:str; booking_date:date; payment_held:bool; total:Decimal; customer_notes:str|None; created_at:datetime
+
+class BookingTransitionRequest(BaseModel):
+    status:BookingStatus
+
+class MilestoneCreate(BaseModel):
+    sequence:int=Field(gt=0)
+    description:str=Field(min_length=3,max_length=4000)
+    allocation_pct:Decimal=Field(gt=0,le=100,decimal_places=2)
+
+class MilestoneBatchCreate(BaseModel):
+    milestones:list[MilestoneCreate]=Field(min_length=1,max_length=20)
+
+    @model_validator(mode="after")
+    def validate_batch(self):
+        sequences=[item.sequence for item in self.milestones]
+        if len(sequences)!=len(set(sequences)):
+            raise ValueError("Milestone sequences must be unique within a booking")
+        total=sum((item.allocation_pct for item in self.milestones),Decimal("0"))
+        if total!=Decimal("100"):
+            raise ValueError("Milestone allocations must total 100 percent")
+        return self
+
+class MilestoneOut(BaseModel):
+    model_config=ConfigDict(from_attributes=True)
+    id:int
+    booking_id:int
+    sequence:int
+    description:str
+    status:MilestoneStatus
+    allocation_pct:Decimal
+    deliverable_url:str|None
+    submitted_at:datetime|None
+    approved_at:datetime|None
+
+class BookingDetailOut(BookingOut):
+    milestones:list[MilestoneOut]=[]
 
 class HealthOut(BaseModel):
     status:str; database:str; payment_mode:str

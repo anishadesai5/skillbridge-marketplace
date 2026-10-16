@@ -1,6 +1,13 @@
 from datetime import date, timedelta
 
 
+def create_test_booking(client,customer_headers):
+    package_id=client.get("/services").json()[0]["package_id"]
+    response=client.post("/bookings",headers=customer_headers,json={"package_id":package_id,"booking_date":str(date.today()+timedelta(days=3)),"customer_notes":"Checkpoint booking"})
+    assert response.status_code==201
+    return response.json()
+
+
 def test_health_confirms_database(client):
     response = client.get("/health")
     assert response.status_code == 200
@@ -129,3 +136,102 @@ def test_provider_cannot_create_or_view_customer_bookings(client,provider_header
     payload={"package_id":package_id,"booking_date":str(date.today()+timedelta(days=2))}
     assert client.post("/bookings",headers=provider_headers,json=payload).status_code==403
     assert client.get("/customers/me/bookings",headers=provider_headers).status_code==403
+
+
+def test_provider_can_confirm_pending_booking(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Confirmed"})
+    assert response.status_code==200
+    assert response.json()["status"]=="Confirmed"
+
+
+def test_booking_rejects_skipped_status_transition(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Active"})
+    assert response.status_code==422
+    assert "Invalid transition" in response.json()["detail"]
+
+
+def test_customer_can_cancel_but_cannot_confirm_booking(client,customer_headers):
+    booking=create_test_booking(client,customer_headers)
+    forbidden=client.patch(f"/bookings/{booking['id']}/status",headers=customer_headers,json={"status":"Confirmed"})
+    assert forbidden.status_code==403
+    cancelled=client.patch(f"/bookings/{booking['id']}/status",headers=customer_headers,json={"status":"Cancelled"})
+    assert cancelled.status_code==200
+    assert cancelled.json()["status"]=="Cancelled"
+
+
+def test_provider_can_persist_milestones_totaling_100(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.put(f"/bookings/{booking['id']}/milestones",headers=provider_headers,json={"milestones":[
+        {"sequence":1,"description":"Research and requirements","allocation_pct":"40.00"},
+        {"sequence":2,"description":"Final delivery","allocation_pct":"60.00"},
+    ]})
+    assert response.status_code==200
+    assert [item["sequence"] for item in response.json()]==[1,2]
+    assert sum(float(item["allocation_pct"]) for item in response.json())==100
+    detail=client.get(f"/bookings/{booking['id']}",headers=customer_headers)
+    assert len(detail.json()["milestones"])==2
+
+
+def test_milestone_batch_rejects_invalid_allocation_total(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.put(f"/bookings/{booking['id']}/milestones",headers=provider_headers,json={"milestones":[
+        {"sequence":1,"description":"First delivery","allocation_pct":"40.00"},
+        {"sequence":2,"description":"Second delivery","allocation_pct":"50.00"},
+    ]})
+    assert response.status_code==422
+    detail=client.get(f"/bookings/{booking['id']}",headers=customer_headers)
+    assert detail.json()["milestones"]==[]
+
+
+def test_milestone_batch_rejects_duplicate_sequences(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.put(f"/bookings/{booking['id']}/milestones",headers=provider_headers,json={"milestones":[
+        {"sequence":1,"description":"First delivery","allocation_pct":"50.00"},
+        {"sequence":1,"description":"Second delivery","allocation_pct":"50.00"},
+    ]})
+    assert response.status_code==422
+    assert "unique" in str(response.json()).lower()
+
+
+def test_booking_requires_valid_milestones_before_work_starts(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Confirmed"})
+    response=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Active"})
+    assert response.status_code==422
+    assert "needs milestones" in response.json()["detail"]
+
+
+def test_booking_can_start_with_valid_milestones(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    milestones={"milestones":[{"sequence":1,"description":"Complete service","allocation_pct":"100.00"}]}
+    assert client.put(f"/bookings/{booking['id']}/milestones",headers=provider_headers,json=milestones).status_code==200
+    assert client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Confirmed"}).status_code==200
+    response=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Active"})
+    assert response.status_code==200
+    assert response.json()["status"]=="Active"
+
+
+def test_booking_requires_all_milestones_approved_before_completion(client,customer_headers,provider_headers):
+    from app.models import Milestone, MilestoneStatus
+    from conftest import TestingSession
+
+    booking=create_test_booking(client,customer_headers)
+    milestones={"milestones":[{"sequence":1,"description":"Complete service","allocation_pct":"100.00"}]}
+    client.put(f"/bookings/{booking['id']}/milestones",headers=provider_headers,json=milestones)
+    client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Confirmed"})
+    client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Active"})
+
+    blocked=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Completed"})
+    assert blocked.status_code==422
+    assert "approved" in blocked.json()["detail"].lower()
+
+    with TestingSession() as db:
+        milestone=db.query(Milestone).filter(Milestone.booking_id==booking["id"]).one()
+        milestone.status=MilestoneStatus.APPROVED
+        db.commit()
+
+    completed=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Completed"})
+    assert completed.status_code==200
+    assert completed.json()["status"]=="Completed"

@@ -1,5 +1,6 @@
 .env
 .venv/
+.venv_test/
 .test-venv/
 .test-venv2/
 __pycache__/

@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.models import Booking, BookingStatus, Credential, Milestone, Provider, ServicePackage
+from app.models import Booking, BookingStatus, Credential, Milestone, MilestoneStatus, Provider, ServicePackage
 
 ALLOWED_TRANSITIONS={BookingStatus.PENDING:{BookingStatus.CONFIRMED,BookingStatus.CANCELLED},BookingStatus.CONFIRMED:{BookingStatus.ACTIVE,BookingStatus.CANCELLED},BookingStatus.ACTIVE:{BookingStatus.COMPLETED,BookingStatus.CANCELLED},BookingStatus.COMPLETED:set(),BookingStatus.CANCELLED:set()}
 
@@ -24,4 +24,21 @@ def create_booking(db:Session,customer_id:int,package:ServicePackage,booking_dat
 
 def transition_booking(booking:Booking,new_status:BookingStatus)->None:
     if new_status not in ALLOWED_TRANSITIONS[booking.status]:raise ValueError(f"Invalid transition from {booking.status} to {new_status}")
+    if new_status==BookingStatus.ACTIVE:
+        if not booking.milestones:raise ValueError("A booking needs milestones before work can start")
+        validate_allocations(booking.milestones)
+    if new_status==BookingStatus.COMPLETED:
+        if not booking.milestones or any(m.status!=MilestoneStatus.APPROVED for m in booking.milestones):
+            raise ValueError("All milestones must be approved before completion")
     booking.status=new_status
+
+def replace_milestones(db:Session,booking:Booking,items:list[dict])->list[Milestone]:
+    if booking.status not in {BookingStatus.PENDING,BookingStatus.CONFIRMED}:
+        raise ValueError("Milestones can only be changed before work starts")
+    proposed=[Milestone(booking_id=booking.id,**item) for item in items]
+    validate_allocations(proposed)
+    booking.milestones.clear()
+    db.flush()
+    booking.milestones.extend(proposed)
+    db.flush()
+    return list(booking.milestones)

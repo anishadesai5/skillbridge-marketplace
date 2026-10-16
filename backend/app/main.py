@@ -5,10 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
 from app.db import get_db
-from app.models import Administrator, Booking, Credential, Customer, Provider, Role, ServicePackage, UserAccount
-from app.schemas import BookingCreate, BookingOut, CredentialCreate, CredentialOut, HealthOut, LoginRequest, ProviderAdminOut, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
+from app.models import Administrator, Booking, BookingStatus, Credential, Customer, Provider, Role, ServicePackage, UserAccount
+from app.schemas import BookingCreate, BookingDetailOut, BookingOut, BookingTransitionRequest, CredentialCreate, CredentialOut, HealthOut, LoginRequest, MilestoneBatchCreate, MilestoneOut, ProviderAdminOut, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
 from app.security import create_access_token, get_current_user, hash_password, require_roles, verify_password
-from app.services import create_booking, publish_provider
+from app.services import create_booking, publish_provider, replace_milestones, transition_booking
 
 app=FastAPI(title="SkillBridge API",version="0.1.0",description="CS 701 prototype. All payment records are simulated.")
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:5173"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
@@ -137,3 +137,47 @@ def customer_bookings(user:UserAccount=Depends(require_roles(Role.CUSTOMER)),db:
     customer=db.scalar(select(Customer).where(Customer.user_id==user.id))
     if not customer:raise HTTPException(404,"Customer profile not found")
     return db.scalars(select(Booking).where(Booking.customer_id==customer.id).order_by(Booking.created_at.desc())).all()
+
+def booking_with_milestones(db:Session,booking_id:int)->Booking:
+    booking=db.scalar(select(Booking).where(Booking.id==booking_id).options(selectinload(Booking.milestones)))
+    if not booking:raise HTTPException(404,"Booking not found")
+    return booking
+
+def authorize_booking(user:UserAccount,booking:Booking,db:Session)->None:
+    if user.role==Role.ADMIN:return
+    if user.role==Role.CUSTOMER:
+        customer=db.scalar(select(Customer).where(Customer.user_id==user.id))
+        if customer and booking.customer_id==customer.id:return
+    if user.role==Role.PROVIDER:
+        provider=db.scalar(select(Provider).where(Provider.user_id==user.id))
+        if provider and booking.provider_id==provider.id:return
+    raise HTTPException(403,"Account does not have access to this booking")
+
+@app.get("/bookings/{booking_id}",response_model=BookingDetailOut)
+def booking_detail(booking_id:int,user:UserAccount=Depends(require_roles(Role.CUSTOMER,Role.PROVIDER,Role.ADMIN)),db:Session=Depends(get_db)):
+    booking=booking_with_milestones(db,booking_id)
+    authorize_booking(user,booking,db)
+    return booking
+
+@app.patch("/bookings/{booking_id}/status",response_model=BookingDetailOut)
+def update_booking_status(booking_id:int,payload:BookingTransitionRequest,user:UserAccount=Depends(require_roles(Role.CUSTOMER,Role.PROVIDER)),db:Session=Depends(get_db)):
+    booking=booking_with_milestones(db,booking_id)
+    authorize_booking(user,booking,db)
+    provider_targets={BookingStatus.CONFIRMED,BookingStatus.ACTIVE,BookingStatus.COMPLETED}
+    if user.role==Role.PROVIDER and payload.status not in provider_targets:
+        raise HTTPException(403,"Providers may confirm, start, or complete their bookings")
+    if user.role==Role.CUSTOMER and payload.status!=BookingStatus.CANCELLED:
+        raise HTTPException(403,"Customers may only cancel their bookings")
+    try:transition_booking(booking,payload.status)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    db.commit();db.refresh(booking);return booking
+
+@app.put("/bookings/{booking_id}/milestones",response_model=list[MilestoneOut])
+def put_booking_milestones(booking_id:int,payload:MilestoneBatchCreate,user:UserAccount=Depends(require_roles(Role.PROVIDER)),db:Session=Depends(get_db)):
+    booking=booking_with_milestones(db,booking_id)
+    authorize_booking(user,booking,db)
+    try:milestones=replace_milestones(db,booking,[item.model_dump() for item in payload.milestones])
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    db.commit()
+    for milestone in milestones:db.refresh(milestone)
+    return milestones
