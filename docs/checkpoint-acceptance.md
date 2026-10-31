@@ -28,6 +28,10 @@ A provider can save or replace milestones while an assigned booking is Pending o
 
 The API permits only `Pending -> Confirmed -> Active -> Completed`, plus cancellation from a nonterminal state. It rejects skipped, repeated, reversed, or post-terminal transitions. Only the assigned provider may confirm, start, or complete a booking; only its customer may cancel it.
 
+## AC-06B Provider availability and response
+
+A provider can block a future date and customers cannot request that date. A second nonterminal request for the same provider and date is also rejected. The assigned provider can accept or reject a Pending request, rejection requires a reason, and Cancelled or Rejected requests release the date.
+
 ## AC-07 Role protection
 
 Customer APIs cannot modify provider or administrator data. Provider APIs cannot read another provider's private data. Administrator APIs require the administrator role.

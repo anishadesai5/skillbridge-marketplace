@@ -6,7 +6,8 @@ type User = { id: number; email: string; role: "customer" | "provider" | "admini
 type Package = { id: number; provider_id: number; category: string; title: string; description: string; price: string; duration_days: number };
 type Provider = { id: number; first_name: string; last_name: string; bio?: string; portfolio_url?: string; rating: string; packages: Package[] };
 type Listing = { package_id: number; provider_id: number; provider_name: string; provider_rating: string; category: string; title: string; description: string; price: string; duration_days: number };
-type Booking = { id: number; provider_id: number; package_id: number; status: string; booking_date: string; total: string; customer_notes?: string };
+type Booking = { id: number; provider_id: number; package_id: number; status: string; booking_date: string; total: string; customer_notes?: string; provider_response_note?: string; responded_at?: string };
+type Availability = { id: number; provider_id: number; availability_date: string; available: boolean; note?: string };
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -16,6 +17,8 @@ function App() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [selected, setSelected] = useState<Provider | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [providerBookings, setProviderBookings] = useState<Booking[]>([]);
+  const [availability, setAvailability] = useState<Availability[]>([]);
   const [message, setMessage] = useState("Loading available services…");
   const [bookingMessage, setBookingMessage] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -37,12 +40,23 @@ function App() {
     if (response.ok) setBookings(await response.json());
   }
 
+  async function loadProviderWorkspace(activeToken = token) {
+    if (!activeToken) return;
+    const headers = { Authorization: `Bearer ${activeToken}` };
+    const [bookingResponse, availabilityResponse] = await Promise.all([
+      fetch(`${apiBase}/providers/me/bookings`, { headers }),
+      fetch(`${apiBase}/providers/me/availability`, { headers }),
+    ]);
+    if (bookingResponse.ok) setProviderBookings(await bookingResponse.json());
+    if (availabilityResponse.ok) setAvailability(await availabilityResponse.json());
+  }
+
   useEffect(() => { loadListings(); }, []);
   useEffect(() => {
-    if (!token) { setUser(null); setBookings([]); return; }
+    if (!token) { setUser(null); setBookings([]); setProviderBookings([]); setAvailability([]); return; }
     fetch(`${apiBase}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((currentUser) => { setUser(currentUser); if (currentUser.role === "customer") loadBookings(token); })
+      .then((currentUser) => { setUser(currentUser); if (currentUser.role === "customer") loadBookings(token); if (currentUser.role === "provider") loadProviderWorkspace(token); })
       .catch(() => { localStorage.removeItem("skillbridge_token"); setToken(""); });
   }, [token]);
 
@@ -77,6 +91,30 @@ function App() {
     setBookingMessage(`Booking request #${body.id} was saved with Pending status.`); await loadBookings();
   }
 
+  async function respondToBooking(bookingId: number, decision: "accept" | "reject") {
+    const reason = decision === "reject" ? window.prompt("Why are you rejecting this request?") : "Accepted by provider";
+    if (decision === "reject" && !reason) return;
+    const response = await fetch(`${apiBase}/providers/me/bookings/${bookingId}/response`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ decision, reason }) });
+    const body = await response.json();
+    if (!response.ok) { setBookingMessage(body.detail || "Unable to update booking."); return; }
+    setBookingMessage(`Booking #${bookingId} was ${decision === "accept" ? "accepted" : "rejected"}.`);
+    await loadProviderWorkspace();
+  }
+
+  async function updateAvailability(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBookingMessage("");
+    const data = new FormData(event.currentTarget);
+    const response = await fetch(`${apiBase}/providers/me/availability`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ availability_date: data.get("availability_date"), available: false, note: data.get("note") || null }) });
+    const body = await response.json();
+    if (!response.ok) { setBookingMessage(body.detail || "Unable to update availability."); return; }
+    setBookingMessage(`${body.availability_date} is now blocked.`); event.currentTarget.reset(); await loadProviderWorkspace();
+  }
+
+  async function reopenDate(availabilityDate: string) {
+    const response = await fetch(`${apiBase}/providers/me/availability`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ availability_date: availabilityDate, available: true, note: "Available" }) });
+    if (response.ok) { setBookingMessage(`${availabilityDate} is available again.`); await loadProviderWorkspace(); }
+  }
+
   function logout() { localStorage.removeItem("skillbridge_token"); setToken(""); setUser(null); setSelected(null); }
 
   return (
@@ -92,6 +130,7 @@ function App() {
       </section>
       {selected && <section id="provider-detail" className="detail"><div className="section-title"><div><span className="tag">APPROVED PROVIDER</span><h2>{selected.first_name} {selected.last_name}</h2></div><button className="secondary" type="button" onClick={() => setSelected(null)}>Close</button></div><p>{selected.bio}</p><p>★ {selected.rating} rating</p><div className="packages">{selected.packages.map((pkg) => <div className="package" key={pkg.id}><div><h3>{pkg.title}</h3><p>{pkg.description}</p><strong>${Number(pkg.price).toFixed(2)} · {pkg.duration_days} days</strong></div>{user?.role === "customer" ? <form className="booking-form" onSubmit={(event) => submitBooking(event, pkg.id)}><label>Requested date<input name="booking_date" type="date" min={new Date().toISOString().slice(0,10)} required/></label><label>Notes<textarea name="customer_notes" maxLength={2000} placeholder="Describe what you need (optional)"/></label><button type="submit">Request booking</button></form> : <p className="notice">Sign in as a customer to request this service.</p>}</div>)}</div>{bookingMessage && <p className={bookingMessage.includes("saved") ? "success" : "error"}>{bookingMessage}</p>}</section>}
       {user?.role === "customer" && <section><div className="section-title"><h2>My bookings</h2><span>Saved booking requests</span></div>{bookings.length === 0 ? <p className="notice">No booking requests yet.</p> : <div className="booking-list">{bookings.map((booking) => <div className="booking-row" key={booking.id}><strong>Request #{booking.id}</strong><span>{booking.booking_date}</span><span>${Number(booking.total).toFixed(2)}</span><span className="status">{booking.status}</span></div>)}</div>}</section>}
+      {user?.role === "provider" && <section className="provider-workspace"><div className="section-title"><div><span className="tag">PROVIDER WORKSPACE</span><h2>Booking requests and availability</h2></div><span>Respond to customers and prevent scheduling conflicts.</span></div>{bookingMessage && <p className="success">{bookingMessage}</p>}<div className="workspace-grid"><div><h3>Booking requests</h3>{providerBookings.length === 0 ? <p className="notice">No booking requests yet.</p> : <div className="provider-bookings">{providerBookings.map((booking) => <div className="provider-booking" key={booking.id}><div><strong>Request #{booking.id}</strong><p>{booking.booking_date} · ${Number(booking.total).toFixed(2)}</p>{booking.customer_notes && <p>{booking.customer_notes}</p>}{booking.provider_response_note && <p className="response-note">Response: {booking.provider_response_note}</p>}</div><div className="response-actions"><span className="status">{booking.status}</span>{booking.status === "Pending" && <><button type="button" onClick={() => respondToBooking(booking.id, "accept")}>Accept</button><button className="danger" type="button" onClick={() => respondToBooking(booking.id, "reject")}>Reject</button></>}</div></div>)}</div>}</div><div className="availability-panel"><h3>Blocked dates</h3><form className="availability-form" onSubmit={updateAvailability}><label>Date<input name="availability_date" type="date" min={new Date().toISOString().slice(0,10)} required/></label><label>Reason<input name="note" maxLength={500} placeholder="Optional note"/></label><button type="submit">Block date</button></form>{availability.filter((item) => !item.available).length === 0 ? <p className="notice">No upcoming dates are blocked.</p> : <div className="availability-list">{availability.filter((item) => !item.available).map((item) => <div key={item.id}><span><strong>{item.availability_date}</strong>{item.note ? ` · ${item.note}` : ""}</span><button className="secondary" type="button" onClick={() => reopenDate(item.availability_date)}>Make available</button></div>)}</div>}</div></div></section>}
     </main>
   );
 }

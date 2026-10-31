@@ -1,11 +1,12 @@
 # Database model
 
-The first migration implements the CS 700 ERD as eleven relational entities.
+The migrations implement the CS 700 ERD and the approved CS 701 scheduling extension.
 
 | Entity | Primary key | Main relationships |
 | --- | --- | --- |
 | UserAccount | id | Shared authenticated identity and role |
 | Provider | id | One user, many credentials and packages |
+| ProviderAvailability | id | One provider and one unique calendar date |
 | Credential | id | Belongs to provider |
 | ServicePackage | id | Belongs to provider |
 | Customer | id | One user, many bookings |
@@ -26,4 +27,5 @@ The first migration implements the CS 700 ERD as eleven relational entities.
 - Commission rates remain greater than 0 and less than 100.
 - Provider and customer emails are unique through the shared user account.
 - Milestone sequence is unique within a booking.
+- Provider availability is unique by provider and date.
 - State transition, provider publication, dispute eligibility, allocation total, and ledger idempotency rules are service-layer checks because they depend on multiple rows or prior state.

@@ -19,6 +19,8 @@ CS 701 implementation of the SkillBridge independent service provider marketplac
 - Customer booking history with persisted Pending status
 - Validated booking lifecycle from Pending through Completed or Cancelled
 - Provider-defined milestones with unique sequences and exact 100% allocation
+- Provider availability calendar and booking conflict prevention
+- Provider booking inbox with accept and reject responses
 
 The application does not collect, hold, or transfer real funds. All charges, commissions, and payouts are simulated ledger records.
 
@@ -93,8 +95,17 @@ Seeded accounts use generated passwords so credentials are never committed. For 
 - `PATCH /bookings/{booking_id}/status` (authorized customer or provider)
 - `PUT /bookings/{booking_id}/milestones` (assigned provider only)
 
-The normal lifecycle is `Pending -> Confirmed -> Active -> Completed`. A customer may cancel an eligible booking, but terminal states cannot be changed. Milestone allocations must total exactly 100 percent before work can start, and every milestone must be approved before a booking can be completed.
+The normal lifecycle is `Pending -> Confirmed -> Active -> Completed`. A customer may cancel an eligible booking, and the assigned provider may reject a Pending request. Completed, Cancelled, and Rejected are terminal states. Milestone allocations must total exactly 100 percent before work can start, and every milestone must be approved before a booking can be completed.
+
+## Provider availability and response endpoints
+
+- `GET /providers/me/availability`
+- `PUT /providers/me/availability`
+- `GET /providers/me/bookings`
+- `POST /providers/me/bookings/{booking_id}/response`
+
+Providers can block or reopen future dates from the React workspace. Booking creation rejects explicitly unavailable dates and dates already reserved by a nonterminal request. Providers can accept a Pending request, which moves it to Confirmed, or reject it with a required reason. Rejected and Cancelled requests release the date for a new request.
 
 ## Design traceability
 
-See `docs/design-traceability.md`, `docs/database-model.md`, `docs/checkpoint-acceptance.md`, `docs/migrations-and-seed-data.md`, `docs/authentication-and-roles.md`, `docs/provider-approval-workflow.md`, `docs/customer-search-and-booking.md`, `docs/booking-state-and-milestones.md`, and `docs/checkpoint-demo-script.md`.
+See `docs/design-traceability.md`, `docs/database-model.md`, `docs/checkpoint-acceptance.md`, `docs/migrations-and-seed-data.md`, `docs/authentication-and-roles.md`, `docs/provider-approval-workflow.md`, `docs/customer-search-and-booking.md`, `docs/booking-state-and-milestones.md`, `docs/provider-availability-and-responses.md`, and `docs/checkpoint-demo-script.md`.

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
 class Role(str, enum.Enum): CUSTOMER="customer"; PROVIDER="provider"; ADMIN="administrator"
-class BookingStatus(str, enum.Enum): PENDING="Pending"; CONFIRMED="Confirmed"; ACTIVE="Active"; COMPLETED="Completed"; CANCELLED="Cancelled"
+class BookingStatus(str, enum.Enum): PENDING="Pending"; CONFIRMED="Confirmed"; ACTIVE="Active"; COMPLETED="Completed"; CANCELLED="Cancelled"; REJECTED="Rejected"
 class MilestoneStatus(str, enum.Enum): PENDING="Pending"; SUBMITTED="Submitted"; REVISION="RevisionReq"; DISPUTED="Disputed"; APPROVED="Approved"
 
 class UserAccount(Base):
@@ -25,7 +25,12 @@ class Provider(Base):
     status: Mapped[str]=mapped_column(String(30),default="Pending"); bio: Mapped[str|None]=mapped_column(Text)
     portfolio_url: Mapped[str|None]=mapped_column(String(500)); rating: Mapped[Decimal]=mapped_column(Numeric(2,1),default=0)
     published: Mapped[bool]=mapped_column(Boolean,default=False)
-    credentials=relationship("Credential",cascade="all, delete-orphan"); packages=relationship("ServicePackage",cascade="all, delete-orphan")
+    credentials=relationship("Credential",cascade="all, delete-orphan"); packages=relationship("ServicePackage",cascade="all, delete-orphan"); availability=relationship("ProviderAvailability",cascade="all, delete-orphan")
+
+class ProviderAvailability(Base):
+    __tablename__="provider_availability"; __table_args__=(UniqueConstraint("provider_id","availability_date",name="uq_provider_availability_date"),)
+    id: Mapped[int]=mapped_column(primary_key=True); provider_id: Mapped[int]=mapped_column(ForeignKey("provider.id")); availability_date: Mapped[date]=mapped_column(Date,index=True)
+    available: Mapped[bool]=mapped_column(Boolean,default=False); note: Mapped[str|None]=mapped_column(String(500),nullable=True); updated_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
 
 class Credential(Base):
     __tablename__="credential"
@@ -48,6 +53,8 @@ class Booking(Base):
     id: Mapped[int]=mapped_column(primary_key=True); customer_id: Mapped[int]=mapped_column(ForeignKey("customer.id")); provider_id: Mapped[int]=mapped_column(ForeignKey("provider.id")); package_id: Mapped[int]=mapped_column(ForeignKey("service_package.id"))
     status: Mapped[BookingStatus]=mapped_column(Enum(BookingStatus),default=BookingStatus.PENDING); booking_date: Mapped[date]=mapped_column(Date); payment_held: Mapped[bool]=mapped_column(Boolean,default=True); total: Mapped[Decimal]=mapped_column(Numeric(12,2))
     customer_notes: Mapped[str|None]=mapped_column(Text,nullable=True)
+    provider_response_note: Mapped[str|None]=mapped_column(Text,nullable=True)
+    responded_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
     created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
     milestones=relationship("Milestone",cascade="all, delete-orphan")
 

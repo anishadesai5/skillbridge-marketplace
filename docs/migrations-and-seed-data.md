@@ -11,6 +11,8 @@ python -m app.seed
 
 The initial Alembic revision creates the SkillBridge tables and the constraints defined by the SQLAlchemy model. Important constraints include unique account email addresses, positive service prices and booking totals, provider ratings between zero and five, unique milestone sequence numbers per booking, milestone allocation limits, commission limits, and ledger reconciliation.
 
+Revision `0003` adds provider availability records, booking response notes and timestamps, and the terminal Rejected booking status. Provider availability is unique by provider and date.
+
 ## Demo accounts
 
 | Role | Email | Password |

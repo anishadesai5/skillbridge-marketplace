@@ -235,3 +235,67 @@ def test_booking_requires_all_milestones_approved_before_completion(client,custo
     completed=client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Completed"})
     assert completed.status_code==200
     assert completed.json()["status"]=="Completed"
+
+
+def test_provider_can_block_date_and_customer_sees_conflict(client,customer_headers,provider_headers):
+    blocked_date=date.today()+timedelta(days=8)
+    update=client.put("/providers/me/availability",headers=provider_headers,json={"availability_date":str(blocked_date),"available":False,"note":"Conference"})
+    assert update.status_code==200
+    assert update.json()["available"] is False
+    calendar=client.get("/providers/me/availability",headers=provider_headers)
+    assert calendar.status_code==200
+    assert calendar.json()[0]["note"]=="Conference"
+
+    package_id=client.get("/services").json()[0]["package_id"]
+    response=client.post("/bookings",headers=customer_headers,json={"package_id":package_id,"booking_date":str(blocked_date)})
+    assert response.status_code==422
+    assert "unavailable" in response.json()["detail"].lower()
+
+
+def test_booking_rejects_provider_date_conflict(client,customer_headers):
+    package_id=client.get("/services").json()[0]["package_id"]
+    booking_date=date.today()+timedelta(days=9)
+    payload={"package_id":package_id,"booking_date":str(booking_date)}
+    assert client.post("/bookings",headers=customer_headers,json=payload).status_code==201
+    conflict=client.post("/bookings",headers=customer_headers,json=payload)
+    assert conflict.status_code==422
+    assert "already has a booking" in conflict.json()["detail"]
+
+
+def test_provider_can_list_and_accept_pending_booking(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    inbox=client.get("/providers/me/bookings",headers=provider_headers)
+    assert inbox.status_code==200
+    assert inbox.json()[0]["id"]==booking["id"]
+
+    response=client.post(f"/providers/me/bookings/{booking['id']}/response",headers=provider_headers,json={"decision":"accept","reason":"Available for the requested date"})
+    assert response.status_code==200
+    assert response.json()["status"]=="Confirmed"
+    assert response.json()["provider_response_note"]=="Available for the requested date"
+    assert response.json()["responded_at"] is not None
+
+
+def test_provider_can_reject_and_date_becomes_bookable(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.post(f"/providers/me/bookings/{booking['id']}/response",headers=provider_headers,json={"decision":"reject","reason":"Already committed elsewhere"})
+    assert response.status_code==200
+    assert response.json()["status"]=="Rejected"
+    assert response.json()["provider_response_note"]=="Already committed elsewhere"
+
+    replacement=client.post("/bookings",headers=customer_headers,json={"package_id":booking["package_id"],"booking_date":booking["booking_date"]})
+    assert replacement.status_code==201
+
+
+def test_provider_rejection_requires_reason(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    response=client.post(f"/providers/me/bookings/{booking['id']}/response",headers=provider_headers,json={"decision":"reject"})
+    assert response.status_code==422
+    assert "reason" in response.json()["detail"].lower()
+
+
+def test_other_provider_cannot_respond_to_booking(client,customer_headers):
+    booking=create_test_booking(client,customer_headers)
+    registration=client.post("/auth/register",json={"email":"other.provider@example.test","password":"Provider456!","role":"provider","first_name":"Other","last_name":"Provider"})
+    headers={"Authorization":f"Bearer {registration.json()['access_token']}"}
+    response=client.post(f"/providers/me/bookings/{booking['id']}/response",headers=headers,json={"decision":"accept"})
+    assert response.status_code==403

@@ -29,10 +29,28 @@ class BookingCreate(BaseModel):
 
 class BookingOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
-    id:int; customer_id:int; provider_id:int; package_id:int; status:str; booking_date:date; payment_held:bool; total:Decimal; customer_notes:str|None; created_at:datetime
+    id:int; customer_id:int; provider_id:int; package_id:int; status:str; booking_date:date; payment_held:bool; total:Decimal; customer_notes:str|None; provider_response_note:str|None; responded_at:datetime|None; created_at:datetime
 
 class BookingTransitionRequest(BaseModel):
     status:BookingStatus
+
+class ProviderBookingResponse(BaseModel):
+    decision:str=Field(pattern="^(accept|reject)$")
+    reason:str|None=Field(default=None,max_length=1000)
+
+class ProviderAvailabilityUpdate(BaseModel):
+    availability_date:date
+    available:bool=False
+    note:str|None=Field(default=None,max_length=500)
+
+class ProviderAvailabilityOut(BaseModel):
+    model_config=ConfigDict(from_attributes=True)
+    id:int
+    provider_id:int
+    availability_date:date
+    available:bool
+    note:str|None
+    updated_at:datetime
 
 class MilestoneCreate(BaseModel):
     sequence:int=Field(gt=0)

@@ -2,9 +2,9 @@ from datetime import date
 from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.models import Booking, BookingStatus, Credential, Milestone, MilestoneStatus, Provider, ServicePackage
+from app.models import Booking, BookingStatus, Credential, Milestone, MilestoneStatus, Provider, ProviderAvailability, ServicePackage
 
-ALLOWED_TRANSITIONS={BookingStatus.PENDING:{BookingStatus.CONFIRMED,BookingStatus.CANCELLED},BookingStatus.CONFIRMED:{BookingStatus.ACTIVE,BookingStatus.CANCELLED},BookingStatus.ACTIVE:{BookingStatus.COMPLETED,BookingStatus.CANCELLED},BookingStatus.COMPLETED:set(),BookingStatus.CANCELLED:set()}
+ALLOWED_TRANSITIONS={BookingStatus.PENDING:{BookingStatus.CONFIRMED,BookingStatus.CANCELLED,BookingStatus.REJECTED},BookingStatus.CONFIRMED:{BookingStatus.ACTIVE,BookingStatus.CANCELLED},BookingStatus.ACTIVE:{BookingStatus.COMPLETED,BookingStatus.CANCELLED},BookingStatus.COMPLETED:set(),BookingStatus.CANCELLED:set(),BookingStatus.REJECTED:set()}
 
 def publish_provider(db:Session,provider:Provider)->Provider:
     verified=db.scalar(select(Credential.id).where(Credential.provider_id==provider.id,Credential.status=="Verified"))
@@ -19,6 +19,10 @@ def create_booking(db:Session,customer_id:int,package:ServicePackage,booking_dat
     if booking_date<date.today():raise ValueError("Booking date cannot be in the past")
     provider=db.get(Provider,package.provider_id)
     if not package.active or not provider or not provider.published:raise ValueError("Package is not bookable")
+    calendar_entry=db.scalar(select(ProviderAvailability).where(ProviderAvailability.provider_id==package.provider_id,ProviderAvailability.availability_date==booking_date))
+    if calendar_entry and not calendar_entry.available:raise ValueError("Provider is unavailable on the selected date")
+    conflict=db.scalar(select(Booking.id).where(Booking.provider_id==package.provider_id,Booking.booking_date==booking_date,Booking.status.notin_([BookingStatus.CANCELLED,BookingStatus.REJECTED])))
+    if conflict:raise ValueError("Provider already has a booking request on the selected date")
     booking=Booking(customer_id=customer_id,provider_id=package.provider_id,package_id=package.id,booking_date=booking_date,total=package.price,status=BookingStatus.PENDING,payment_held=True,customer_notes=customer_notes)
     db.add(booking);db.flush();return booking
 

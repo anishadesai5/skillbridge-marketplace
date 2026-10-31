@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -5,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
 from app.db import get_db
-from app.models import Administrator, Booking, BookingStatus, Credential, Customer, Provider, Role, ServicePackage, UserAccount
-from app.schemas import BookingCreate, BookingDetailOut, BookingOut, BookingTransitionRequest, CredentialCreate, CredentialOut, HealthOut, LoginRequest, MilestoneBatchCreate, MilestoneOut, ProviderAdminOut, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
+from app.models import Administrator, Booking, BookingStatus, Credential, Customer, Provider, ProviderAvailability, Role, ServicePackage, UserAccount
+from app.schemas import BookingCreate, BookingDetailOut, BookingOut, BookingTransitionRequest, CredentialCreate, CredentialOut, HealthOut, LoginRequest, MilestoneBatchCreate, MilestoneOut, ProviderAdminOut, ProviderAvailabilityOut, ProviderAvailabilityUpdate, ProviderBookingResponse, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
 from app.security import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from app.services import create_booking, publish_provider, replace_milestones, transition_booking
 
@@ -103,6 +104,25 @@ def add_credential(payload:CredentialCreate,user:UserAccount=Depends(require_rol
     provider.status="Pending";provider.published=False
     db.add(credential);db.commit();db.refresh(credential);return credential
 
+@app.get("/providers/me/availability",response_model=list[ProviderAvailabilityOut])
+def provider_availability(user:UserAccount=Depends(require_roles(Role.PROVIDER)),db:Session=Depends(get_db)):
+    provider=db.scalar(select(Provider).where(Provider.user_id==user.id))
+    if not provider:raise HTTPException(404,"Provider profile not found")
+    return db.scalars(select(ProviderAvailability).where(ProviderAvailability.provider_id==provider.id,ProviderAvailability.availability_date>=date.today()).order_by(ProviderAvailability.availability_date)).all()
+
+@app.put("/providers/me/availability",response_model=ProviderAvailabilityOut)
+def update_provider_availability(payload:ProviderAvailabilityUpdate,user:UserAccount=Depends(require_roles(Role.PROVIDER)),db:Session=Depends(get_db)):
+    if payload.availability_date<date.today():raise HTTPException(422,"Availability date cannot be in the past")
+    provider=db.scalar(select(Provider).where(Provider.user_id==user.id))
+    if not provider:raise HTTPException(404,"Provider profile not found")
+    entry=db.scalar(select(ProviderAvailability).where(ProviderAvailability.provider_id==provider.id,ProviderAvailability.availability_date==payload.availability_date))
+    if entry:
+        entry.available=payload.available;entry.note=payload.note
+    else:
+        entry=ProviderAvailability(provider_id=provider.id,availability_date=payload.availability_date,available=payload.available,note=payload.note)
+        db.add(entry)
+    db.commit();db.refresh(entry);return entry
+
 @app.get("/admin/providers/pending",response_model=list[ProviderAdminOut])
 def pending_providers(user:UserAccount=Depends(require_roles(Role.ADMIN)),db:Session=Depends(get_db)):
     return db.scalars(select(Provider).where(Provider.status=="Pending").options(selectinload(Provider.credentials))).unique().all()
@@ -138,6 +158,27 @@ def customer_bookings(user:UserAccount=Depends(require_roles(Role.CUSTOMER)),db:
     if not customer:raise HTTPException(404,"Customer profile not found")
     return db.scalars(select(Booking).where(Booking.customer_id==customer.id).order_by(Booking.created_at.desc())).all()
 
+@app.get("/providers/me/bookings",response_model=list[BookingOut])
+def provider_bookings(user:UserAccount=Depends(require_roles(Role.PROVIDER)),db:Session=Depends(get_db)):
+    provider=db.scalar(select(Provider).where(Provider.user_id==user.id))
+    if not provider:raise HTTPException(404,"Provider profile not found")
+    return db.scalars(select(Booking).where(Booking.provider_id==provider.id).order_by(Booking.booking_date,Booking.created_at.desc())).all()
+
+@app.post("/providers/me/bookings/{booking_id}/response",response_model=BookingOut)
+def respond_to_booking(booking_id:int,payload:ProviderBookingResponse,user:UserAccount=Depends(require_roles(Role.PROVIDER)),db:Session=Depends(get_db)):
+    provider=db.scalar(select(Provider).where(Provider.user_id==user.id))
+    if not provider:raise HTTPException(404,"Provider profile not found")
+    booking=db.get(Booking,booking_id)
+    if not booking:raise HTTPException(404,"Booking not found")
+    if booking.provider_id!=provider.id:raise HTTPException(403,"Account does not have access to this booking")
+    if payload.decision=="reject" and not payload.reason:raise HTTPException(422,"A rejection reason is required")
+    new_status=BookingStatus.CONFIRMED if payload.decision=="accept" else BookingStatus.REJECTED
+    try:transition_booking(booking,new_status)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    booking.provider_response_note=payload.reason
+    booking.responded_at=datetime.utcnow()
+    db.commit();db.refresh(booking);return booking
+
 def booking_with_milestones(db:Session,booking_id:int)->Booking:
     booking=db.scalar(select(Booking).where(Booking.id==booking_id).options(selectinload(Booking.milestones)))
     if not booking:raise HTTPException(404,"Booking not found")
@@ -163,13 +204,14 @@ def booking_detail(booking_id:int,user:UserAccount=Depends(require_roles(Role.CU
 def update_booking_status(booking_id:int,payload:BookingTransitionRequest,user:UserAccount=Depends(require_roles(Role.CUSTOMER,Role.PROVIDER)),db:Session=Depends(get_db)):
     booking=booking_with_milestones(db,booking_id)
     authorize_booking(user,booking,db)
-    provider_targets={BookingStatus.CONFIRMED,BookingStatus.ACTIVE,BookingStatus.COMPLETED}
+    provider_targets={BookingStatus.CONFIRMED,BookingStatus.ACTIVE,BookingStatus.COMPLETED,BookingStatus.REJECTED}
     if user.role==Role.PROVIDER and payload.status not in provider_targets:
         raise HTTPException(403,"Providers may confirm, start, or complete their bookings")
     if user.role==Role.CUSTOMER and payload.status!=BookingStatus.CANCELLED:
         raise HTTPException(403,"Customers may only cancel their bookings")
     try:transition_booking(booking,payload.status)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    if user.role==Role.PROVIDER and payload.status in {BookingStatus.CONFIRMED,BookingStatus.REJECTED}:booking.responded_at=datetime.utcnow()
     db.commit();db.refresh(booking);return booking
 
 @app.put("/bookings/{booking_id}/milestones",response_model=list[MilestoneOut])

@@ -15,7 +15,7 @@ This document records the implementation for Project Plan Tasks 10.1 and 10.2 (O
 | Completed | None | Terminal state |
 | Cancelled | None | Terminal state |
 
-The API rejects skipped, repeated, reversed, and post-terminal transitions. A booking cannot move to Active until it has a valid milestone plan. It cannot move to Completed until every milestone is Approved.
+The API rejects skipped, repeated, reversed, and post-terminal transitions. A provider may reject a Pending request, and Rejected is terminal. A booking cannot move to Active until it has a valid milestone plan. It cannot move to Completed until every milestone is Approved.
 
 ## Milestone persistence rules
 
