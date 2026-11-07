@@ -79,8 +79,37 @@ class MilestoneOut(BaseModel):
     status:MilestoneStatus
     allocation_pct:Decimal
     deliverable_url:str|None
+    submission_notes:str|None
+    revision_reason:str|None
+    submission_count:int
     submitted_at:datetime|None
     approved_at:datetime|None
+
+class MilestoneSubmission(BaseModel):
+    deliverable_url:str=Field(min_length=5,max_length=500)
+    notes:str|None=Field(default=None,max_length=4000)
+
+class MilestoneRevisionRequest(BaseModel):
+    reason:str=Field(min_length=3,max_length=4000)
+
+class LedgerOut(BaseModel):
+    model_config=ConfigDict(from_attributes=True)
+    id:int
+    booking_id:int
+    milestone_id:int|None
+    provider_id:int
+    customer_id:int
+    transaction_type:str
+    amount:Decimal
+    commission_amount:Decimal
+    payout_amount:Decimal
+    created_at:datetime
+    status:str
+
+class MilestoneApprovalOut(BaseModel):
+    milestone:MilestoneOut
+    ledger:LedgerOut
+    already_approved:bool
 
 class BookingDetailOut(BookingOut):
     milestones:list[MilestoneOut]=[]

@@ -1,8 +1,8 @@
-from datetime import date
-from decimal import Decimal
+from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.models import Booking, BookingStatus, Credential, Milestone, MilestoneStatus, Provider, ProviderAvailability, ServicePackage
+from app.models import Booking, BookingStatus, Credential, LedgerTransaction, Milestone, MilestoneStatus, Provider, ProviderAvailability, ServicePackage
 
 ALLOWED_TRANSITIONS={BookingStatus.PENDING:{BookingStatus.CONFIRMED,BookingStatus.CANCELLED,BookingStatus.REJECTED},BookingStatus.CONFIRMED:{BookingStatus.ACTIVE,BookingStatus.CANCELLED},BookingStatus.ACTIVE:{BookingStatus.COMPLETED,BookingStatus.CANCELLED},BookingStatus.COMPLETED:set(),BookingStatus.CANCELLED:set(),BookingStatus.REJECTED:set()}
 
@@ -46,3 +46,36 @@ def replace_milestones(db:Session,booking:Booking,items:list[dict])->list[Milest
     booking.milestones.extend(proposed)
     db.flush()
     return list(booking.milestones)
+
+def submit_milestone(milestone:Milestone,deliverable_url:str,notes:str|None)->Milestone:
+    if milestone.status not in {MilestoneStatus.PENDING,MilestoneStatus.REVISION}:
+        raise ValueError("Only pending milestones or requested revisions can be submitted")
+    milestone.deliverable_url=deliverable_url
+    milestone.submission_notes=notes
+    milestone.submission_count+=1
+    milestone.submitted_at=datetime.utcnow()
+    milestone.status=MilestoneStatus.SUBMITTED
+    return milestone
+
+def request_milestone_revision(milestone:Milestone,reason:str)->Milestone:
+    if milestone.status!=MilestoneStatus.SUBMITTED:
+        raise ValueError("A revision can only be requested for submitted work")
+    milestone.revision_reason=reason
+    milestone.status=MilestoneStatus.REVISION
+    return milestone
+
+def approve_milestone(db:Session,booking:Booking,milestone:Milestone,commission_rate:Decimal=Decimal("10.00"))->tuple[LedgerTransaction,bool]:
+    existing=db.scalar(select(LedgerTransaction).where(LedgerTransaction.milestone_id==milestone.id,LedgerTransaction.transaction_type=="MilestoneRelease"))
+    if milestone.status==MilestoneStatus.APPROVED:
+        if not existing:raise ValueError("Approved milestone is missing its simulated release record")
+        return existing,True
+    if milestone.status!=MilestoneStatus.SUBMITTED:
+        raise ValueError("Only submitted work can be approved")
+    amount=(Decimal(booking.total)*Decimal(milestone.allocation_pct)/Decimal("100")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
+    commission=(amount*commission_rate/Decimal("100")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
+    ledger=existing or LedgerTransaction(booking_id=booking.id,milestone_id=milestone.id,provider_id=booking.provider_id,customer_id=booking.customer_id,transaction_type="MilestoneRelease",amount=amount,commission_amount=commission,payout_amount=amount-commission,status="SimulatedReleased")
+    if not existing:db.add(ledger)
+    milestone.status=MilestoneStatus.APPROVED
+    milestone.approved_at=datetime.utcnow()
+    db.flush()
+    return ledger,False

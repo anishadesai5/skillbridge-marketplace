@@ -6,10 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
 from app.db import get_db
-from app.models import Administrator, Booking, BookingStatus, Credential, Customer, Provider, ProviderAvailability, Role, ServicePackage, UserAccount
-from app.schemas import BookingCreate, BookingDetailOut, BookingOut, BookingTransitionRequest, CredentialCreate, CredentialOut, HealthOut, LoginRequest, MilestoneBatchCreate, MilestoneOut, ProviderAdminOut, ProviderAvailabilityOut, ProviderAvailabilityUpdate, ProviderBookingResponse, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
+from app.models import Administrator, Booking, BookingStatus, Credential, Customer, Milestone, Provider, ProviderAvailability, Role, ServicePackage, UserAccount
+from app.schemas import BookingCreate, BookingDetailOut, BookingOut, BookingTransitionRequest, CredentialCreate, CredentialOut, HealthOut, LoginRequest, MilestoneApprovalOut, MilestoneBatchCreate, MilestoneOut, MilestoneRevisionRequest, MilestoneSubmission, ProviderAdminOut, ProviderAvailabilityOut, ProviderAvailabilityUpdate, ProviderBookingResponse, ProviderDecision, ProviderOut, ProviderProfileUpdate, RegisterRequest, ServiceListingOut, TokenOut, UserOut
 from app.security import create_access_token, get_current_user, hash_password, require_roles, verify_password
-from app.services import create_booking, publish_provider, replace_milestones, transition_booking
+from app.services import approve_milestone, create_booking, publish_provider, replace_milestones, request_milestone_revision, submit_milestone, transition_booking
 
 app=FastAPI(title="SkillBridge API",version="0.1.0",description="CS 701 prototype. All payment records are simulated.")
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:5173"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
@@ -223,3 +223,35 @@ def put_booking_milestones(booking_id:int,payload:MilestoneBatchCreate,user:User
     db.commit()
     for milestone in milestones:db.refresh(milestone)
     return milestones
+
+def milestone_for_booking(db:Session,booking_id:int,milestone_id:int)->tuple[Booking,Milestone]:
+    booking=booking_with_milestones(db,booking_id)
+    milestone=next((item for item in booking.milestones if item.id==milestone_id),None)
+    if not milestone:raise HTTPException(404,"Milestone not found for this booking")
+    return booking,milestone
+
+@app.post("/bookings/{booking_id}/milestones/{milestone_id}/submit",response_model=MilestoneOut)
+def submit_booking_milestone(booking_id:int,milestone_id:int,payload:MilestoneSubmission,user:UserAccount=Depends(require_roles(Role.PROVIDER)),db:Session=Depends(get_db)):
+    booking,milestone=milestone_for_booking(db,booking_id,milestone_id)
+    authorize_booking(user,booking,db)
+    if booking.status!=BookingStatus.ACTIVE:raise HTTPException(422,"Milestone work can only be submitted for an active booking")
+    try:submit_milestone(milestone,payload.deliverable_url,payload.notes)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    db.commit();db.refresh(milestone);return milestone
+
+@app.post("/bookings/{booking_id}/milestones/{milestone_id}/revision",response_model=MilestoneOut)
+def revise_booking_milestone(booking_id:int,milestone_id:int,payload:MilestoneRevisionRequest,user:UserAccount=Depends(require_roles(Role.CUSTOMER)),db:Session=Depends(get_db)):
+    booking,milestone=milestone_for_booking(db,booking_id,milestone_id)
+    authorize_booking(user,booking,db)
+    try:request_milestone_revision(milestone,payload.reason)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    db.commit();db.refresh(milestone);return milestone
+
+@app.post("/bookings/{booking_id}/milestones/{milestone_id}/approve",response_model=MilestoneApprovalOut)
+def approve_booking_milestone(booking_id:int,milestone_id:int,user:UserAccount=Depends(require_roles(Role.CUSTOMER)),db:Session=Depends(get_db)):
+    booking,milestone=milestone_for_booking(db,booking_id,milestone_id)
+    authorize_booking(user,booking,db)
+    try:ledger,already_approved=approve_milestone(db,booking,milestone)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    db.commit();db.refresh(milestone);db.refresh(ledger)
+    return {"milestone":milestone,"ledger":ledger,"already_approved":already_approved}

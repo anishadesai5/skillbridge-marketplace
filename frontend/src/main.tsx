@@ -8,6 +8,8 @@ type Provider = { id: number; first_name: string; last_name: string; bio?: strin
 type Listing = { package_id: number; provider_id: number; provider_name: string; provider_rating: string; category: string; title: string; description: string; price: string; duration_days: number };
 type Booking = { id: number; provider_id: number; package_id: number; status: string; booking_date: string; total: string; customer_notes?: string; provider_response_note?: string; responded_at?: string };
 type Availability = { id: number; provider_id: number; availability_date: string; available: boolean; note?: string };
+type Milestone = { id: number; booking_id: number; sequence: number; description: string; status: string; allocation_pct: string; deliverable_url?: string; submission_notes?: string; revision_reason?: string; submission_count: number };
+type BookingDetail = Booking & { milestones: Milestone[] };
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -19,6 +21,7 @@ function App() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [providerBookings, setProviderBookings] = useState<Booking[]>([]);
   const [availability, setAvailability] = useState<Availability[]>([]);
+  const [selectedBooking, setSelectedBooking] = useState<BookingDetail | null>(null);
   const [message, setMessage] = useState("Loading available services…");
   const [bookingMessage, setBookingMessage] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -115,6 +118,37 @@ function App() {
     if (response.ok) { setBookingMessage(`${availabilityDate} is available again.`); await loadProviderWorkspace(); }
   }
 
+  async function viewBooking(bookingId: number) {
+    const response = await fetch(`${apiBase}/bookings/${bookingId}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (response.ok) setSelectedBooking(await response.json());
+  }
+
+  async function submitMilestone(bookingId: number, milestoneId: number) {
+    const deliverableUrl = window.prompt("Deliverable URL");
+    if (!deliverableUrl) return;
+    const notes = window.prompt("Submission notes (optional)") || null;
+    const response = await fetch(`${apiBase}/bookings/${bookingId}/milestones/${milestoneId}/submit`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ deliverable_url: deliverableUrl, notes }) });
+    const body = await response.json();
+    if (!response.ok) { setBookingMessage(body.detail || "Unable to submit milestone."); return; }
+    setBookingMessage(`Milestone ${body.sequence} submitted for customer review.`); await viewBooking(bookingId);
+  }
+
+  async function requestRevision(bookingId: number, milestoneId: number) {
+    const reason = window.prompt("Describe the required revision");
+    if (!reason) return;
+    const response = await fetch(`${apiBase}/bookings/${bookingId}/milestones/${milestoneId}/revision`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ reason }) });
+    const body = await response.json();
+    if (!response.ok) { setBookingMessage(body.detail || "Unable to request revision."); return; }
+    setBookingMessage("Revision requested from the provider."); await viewBooking(bookingId);
+  }
+
+  async function approveMilestone(bookingId: number, milestoneId: number) {
+    const response = await fetch(`${apiBase}/bookings/${bookingId}/milestones/${milestoneId}/approve`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const body = await response.json();
+    if (!response.ok) { setBookingMessage(body.detail || "Unable to approve milestone."); return; }
+    setBookingMessage(`Milestone approved. Simulated payout: $${Number(body.ledger.payout_amount).toFixed(2)}.`); await viewBooking(bookingId);
+  }
+
   function logout() { localStorage.removeItem("skillbridge_token"); setToken(""); setUser(null); setSelected(null); }
 
   return (
@@ -129,8 +163,9 @@ function App() {
         <div className="grid">{listings.map((item) => <article key={item.package_id}><div className="avatar">{item.provider_name.split(" ").map((name) => name[0]).join("")}</div><div><span className="tag">{item.category}</span><h3>{item.title}</h3><p>{item.description}</p><p className="provider">{item.provider_name} · ★ {item.provider_rating}</p></div><footer><strong>${Number(item.price).toFixed(2)}</strong><span>{item.duration_days} days</span><button type="button" onClick={() => viewProvider(item.provider_id)}>View provider</button></footer></article>)}</div>
       </section>
       {selected && <section id="provider-detail" className="detail"><div className="section-title"><div><span className="tag">APPROVED PROVIDER</span><h2>{selected.first_name} {selected.last_name}</h2></div><button className="secondary" type="button" onClick={() => setSelected(null)}>Close</button></div><p>{selected.bio}</p><p>★ {selected.rating} rating</p><div className="packages">{selected.packages.map((pkg) => <div className="package" key={pkg.id}><div><h3>{pkg.title}</h3><p>{pkg.description}</p><strong>${Number(pkg.price).toFixed(2)} · {pkg.duration_days} days</strong></div>{user?.role === "customer" ? <form className="booking-form" onSubmit={(event) => submitBooking(event, pkg.id)}><label>Requested date<input name="booking_date" type="date" min={new Date().toISOString().slice(0,10)} required/></label><label>Notes<textarea name="customer_notes" maxLength={2000} placeholder="Describe what you need (optional)"/></label><button type="submit">Request booking</button></form> : <p className="notice">Sign in as a customer to request this service.</p>}</div>)}</div>{bookingMessage && <p className={bookingMessage.includes("saved") ? "success" : "error"}>{bookingMessage}</p>}</section>}
-      {user?.role === "customer" && <section><div className="section-title"><h2>My bookings</h2><span>Saved booking requests</span></div>{bookings.length === 0 ? <p className="notice">No booking requests yet.</p> : <div className="booking-list">{bookings.map((booking) => <div className="booking-row" key={booking.id}><strong>Request #{booking.id}</strong><span>{booking.booking_date}</span><span>${Number(booking.total).toFixed(2)}</span><span className="status">{booking.status}</span></div>)}</div>}</section>}
-      {user?.role === "provider" && <section className="provider-workspace"><div className="section-title"><div><span className="tag">PROVIDER WORKSPACE</span><h2>Booking requests and availability</h2></div><span>Respond to customers and prevent scheduling conflicts.</span></div>{bookingMessage && <p className="success">{bookingMessage}</p>}<div className="workspace-grid"><div><h3>Booking requests</h3>{providerBookings.length === 0 ? <p className="notice">No booking requests yet.</p> : <div className="provider-bookings">{providerBookings.map((booking) => <div className="provider-booking" key={booking.id}><div><strong>Request #{booking.id}</strong><p>{booking.booking_date} · ${Number(booking.total).toFixed(2)}</p>{booking.customer_notes && <p>{booking.customer_notes}</p>}{booking.provider_response_note && <p className="response-note">Response: {booking.provider_response_note}</p>}</div><div className="response-actions"><span className="status">{booking.status}</span>{booking.status === "Pending" && <><button type="button" onClick={() => respondToBooking(booking.id, "accept")}>Accept</button><button className="danger" type="button" onClick={() => respondToBooking(booking.id, "reject")}>Reject</button></>}</div></div>)}</div>}</div><div className="availability-panel"><h3>Blocked dates</h3><form className="availability-form" onSubmit={updateAvailability}><label>Date<input name="availability_date" type="date" min={new Date().toISOString().slice(0,10)} required/></label><label>Reason<input name="note" maxLength={500} placeholder="Optional note"/></label><button type="submit">Block date</button></form>{availability.filter((item) => !item.available).length === 0 ? <p className="notice">No upcoming dates are blocked.</p> : <div className="availability-list">{availability.filter((item) => !item.available).map((item) => <div key={item.id}><span><strong>{item.availability_date}</strong>{item.note ? ` · ${item.note}` : ""}</span><button className="secondary" type="button" onClick={() => reopenDate(item.availability_date)}>Make available</button></div>)}</div>}</div></div></section>}
+      {user?.role === "customer" && <section><div className="section-title"><h2>My bookings</h2><span>Saved booking requests</span></div>{bookings.length === 0 ? <p className="notice">No booking requests yet.</p> : <div className="booking-list">{bookings.map((booking) => <div className="booking-row" key={booking.id}><strong>Request #{booking.id}</strong><span>{booking.booking_date}</span><span>${Number(booking.total).toFixed(2)}</span><span className="status">{booking.status}</span><button type="button" onClick={() => viewBooking(booking.id)}>Review milestones</button></div>)}</div>}</section>}
+      {user?.role === "provider" && <section className="provider-workspace"><div className="section-title"><div><span className="tag">PROVIDER WORKSPACE</span><h2>Booking requests and availability</h2></div><span>Respond to customers and prevent scheduling conflicts.</span></div>{bookingMessage && <p className="success">{bookingMessage}</p>}<div className="workspace-grid"><div><h3>Booking requests</h3>{providerBookings.length === 0 ? <p className="notice">No booking requests yet.</p> : <div className="provider-bookings">{providerBookings.map((booking) => <div className="provider-booking" key={booking.id}><div><strong>Request #{booking.id}</strong><p>{booking.booking_date} · ${Number(booking.total).toFixed(2)}</p>{booking.customer_notes && <p>{booking.customer_notes}</p>}{booking.provider_response_note && <p className="response-note">Response: {booking.provider_response_note}</p>}</div><div className="response-actions"><span className="status">{booking.status}</span>{booking.status === "Pending" && <><button type="button" onClick={() => respondToBooking(booking.id, "accept")}>Accept</button><button className="danger" type="button" onClick={() => respondToBooking(booking.id, "reject")}>Reject</button></>}<button className="secondary" type="button" onClick={() => viewBooking(booking.id)}>Milestones</button></div></div>)}</div>}</div><div className="availability-panel"><h3>Blocked dates</h3><form className="availability-form" onSubmit={updateAvailability}><label>Date<input name="availability_date" type="date" min={new Date().toISOString().slice(0,10)} required/></label><label>Reason<input name="note" maxLength={500} placeholder="Optional note"/></label><button type="submit">Block date</button></form>{availability.filter((item) => !item.available).length === 0 ? <p className="notice">No upcoming dates are blocked.</p> : <div className="availability-list">{availability.filter((item) => !item.available).map((item) => <div key={item.id}><span><strong>{item.availability_date}</strong>{item.note ? ` · ${item.note}` : ""}</span><button className="secondary" type="button" onClick={() => reopenDate(item.availability_date)}>Make available</button></div>)}</div>}</div></div></section>}
+      {selectedBooking && <section className="detail"><div className="section-title"><div><span className="tag">BOOKING #{selectedBooking.id}</span><h2>Milestone review</h2></div><button className="secondary" type="button" onClick={() => setSelectedBooking(null)}>Close</button></div>{bookingMessage && <p className="success">{bookingMessage}</p>}{selectedBooking.milestones.length === 0 ? <p className="notice">No milestones have been created yet.</p> : <div className="packages">{selectedBooking.milestones.map((milestone) => <div className="package" key={milestone.id}><div><h3>{milestone.sequence}. {milestone.description}</h3><p><span className="status">{milestone.status}</span> · {milestone.allocation_pct}% · {milestone.submission_count} submission(s)</p>{milestone.deliverable_url && <p><a href={milestone.deliverable_url} target="_blank" rel="noreferrer">Open submitted work</a></p>}{milestone.submission_notes && <p>Provider notes: {milestone.submission_notes}</p>}{milestone.revision_reason && <p className="response-note">Revision request: {milestone.revision_reason}</p>}</div><div className="response-actions">{user?.role === "provider" && ["Pending", "RevisionReq"].includes(milestone.status) && <button type="button" onClick={() => submitMilestone(selectedBooking.id, milestone.id)}>{milestone.status === "RevisionReq" ? "Resubmit work" : "Submit work"}</button>}{user?.role === "customer" && milestone.status === "Submitted" && <><button type="button" onClick={() => approveMilestone(selectedBooking.id, milestone.id)}>Approve</button><button className="danger" type="button" onClick={() => requestRevision(selectedBooking.id, milestone.id)}>Request revision</button></>}</div></div>)}</div>}</section>}
     </main>
   );
 }

@@ -8,6 +8,15 @@ def create_test_booking(client,customer_headers):
     return response.json()
 
 
+def create_active_booking_with_milestone(client,customer_headers,provider_headers):
+    booking=create_test_booking(client,customer_headers)
+    milestones=client.put(f"/bookings/{booking['id']}/milestones",headers=provider_headers,json={"milestones":[{"sequence":1,"description":"Complete service","allocation_pct":"100.00"}]})
+    assert milestones.status_code==200
+    assert client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Confirmed"}).status_code==200
+    assert client.patch(f"/bookings/{booking['id']}/status",headers=provider_headers,json={"status":"Active"}).status_code==200
+    return booking,milestones.json()[0]
+
+
 def test_health_confirms_database(client):
     response = client.get("/health")
     assert response.status_code == 200
@@ -299,3 +308,53 @@ def test_other_provider_cannot_respond_to_booking(client,customer_headers):
     headers={"Authorization":f"Bearer {registration.json()['access_token']}"}
     response=client.post(f"/providers/me/bookings/{booking['id']}/response",headers=headers,json={"decision":"accept"})
     assert response.status_code==403
+
+
+def test_provider_submits_customer_requests_revision_and_provider_resubmits(client,customer_headers,provider_headers):
+    booking,milestone=create_active_booking_with_milestone(client,customer_headers,provider_headers)
+    submitted=client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/submit",headers=provider_headers,json={"deliverable_url":"https://example.test/work/v1","notes":"First delivery"})
+    assert submitted.status_code==200
+    assert submitted.json()["status"]=="Submitted"
+    assert submitted.json()["submission_count"]==1
+
+    revision=client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/revision",headers=customer_headers,json={"reason":"Please include the mobile layout"})
+    assert revision.status_code==200
+    assert revision.json()["status"]=="RevisionReq"
+    assert revision.json()["revision_reason"]=="Please include the mobile layout"
+
+    resubmitted=client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/submit",headers=provider_headers,json={"deliverable_url":"https://example.test/work/v2","notes":"Mobile layout added"})
+    assert resubmitted.status_code==200
+    assert resubmitted.json()["status"]=="Submitted"
+    assert resubmitted.json()["submission_count"]==2
+    assert resubmitted.json()["deliverable_url"].endswith("/v2")
+
+
+def test_customer_approval_is_idempotent_and_ledger_reconciles(client,customer_headers,provider_headers):
+    from app.models import LedgerTransaction
+    from conftest import TestingSession
+
+    booking,milestone=create_active_booking_with_milestone(client,customer_headers,provider_headers)
+    client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/submit",headers=provider_headers,json={"deliverable_url":"https://example.test/final"})
+    endpoint=f"/bookings/{booking['id']}/milestones/{milestone['id']}/approve"
+    first=client.post(endpoint,headers=customer_headers)
+    second=client.post(endpoint,headers=customer_headers)
+
+    assert first.status_code==200
+    assert second.status_code==200
+    assert first.json()["already_approved"] is False
+    assert second.json()["already_approved"] is True
+    assert first.json()["ledger"]["id"]==second.json()["ledger"]["id"]
+    ledger=first.json()["ledger"]
+    assert float(ledger["amount"])==450.00
+    assert float(ledger["commission_amount"])==45.00
+    assert float(ledger["payout_amount"])==405.00
+    assert float(ledger["amount"])-float(ledger["commission_amount"])==float(ledger["payout_amount"])
+    with TestingSession() as db:
+        assert db.query(LedgerTransaction).filter(LedgerTransaction.milestone_id==milestone["id"]).count()==1
+
+
+def test_only_assigned_parties_can_submit_or_review_milestone(client,customer_headers,provider_headers):
+    booking,milestone=create_active_booking_with_milestone(client,customer_headers,provider_headers)
+    assert client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/submit",headers=customer_headers,json={"deliverable_url":"https://example.test/work"}).status_code==403
+    assert client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/revision",headers=provider_headers,json={"reason":"Not allowed"}).status_code==403
+    assert client.post(f"/bookings/{booking['id']}/milestones/{milestone['id']}/approve",headers=provider_headers).status_code==403

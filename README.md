@@ -21,6 +21,8 @@ CS 701 implementation of the SkillBridge independent service provider marketplac
 - Provider-defined milestones with unique sequences and exact 100% allocation
 - Provider availability calendar and booking conflict prevention
 - Provider booking inbox with accept and reject responses
+- Provider milestone submission and resubmission after customer revision requests
+- Idempotent customer approval with reconciled simulated commission and payout records
 
 The application does not collect, hold, or transfer real funds. All charges, commissions, and payouts are simulated ledger records.
 
@@ -105,6 +107,14 @@ The normal lifecycle is `Pending -> Confirmed -> Active -> Completed`. A custome
 - `POST /providers/me/bookings/{booking_id}/response`
 
 Providers can block or reopen future dates from the React workspace. Booking creation rejects explicitly unavailable dates and dates already reserved by a nonterminal request. Providers can accept a Pending request, which moves it to Confirmed, or reject it with a required reason. Rejected and Cancelled requests release the date for a new request.
+
+## Milestone submission, revision, and approval endpoints
+
+- `POST /bookings/{booking_id}/milestones/{milestone_id}/submit` (assigned provider)
+- `POST /bookings/{booking_id}/milestones/{milestone_id}/revision` (booking customer)
+- `POST /bookings/{booking_id}/milestones/{milestone_id}/approve` (booking customer)
+
+Providers may submit pending work and resubmit work after a revision request. Customers may request a revision only while work is submitted. Approval is idempotent: repeating the request returns the original simulated ledger release instead of creating a duplicate. The release amount is the booking total multiplied by the milestone allocation; the prototype records a 10% simulated commission and a payout equal to the release minus commission.
 
 ## Design traceability
 

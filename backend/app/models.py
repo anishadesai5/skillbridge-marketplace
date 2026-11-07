@@ -61,7 +61,7 @@ class Booking(Base):
 class Milestone(Base):
     __tablename__="milestone"; __table_args__=(UniqueConstraint("booking_id","sequence",name="uq_milestone_booking_sequence"),CheckConstraint("allocation_pct > 0 AND allocation_pct <= 100",name="ck_milestone_allocation"))
     id: Mapped[int]=mapped_column(primary_key=True); booking_id: Mapped[int]=mapped_column(ForeignKey("booking.id")); sequence: Mapped[int]=mapped_column(); description: Mapped[str]=mapped_column(Text)
-    status: Mapped[MilestoneStatus]=mapped_column(Enum(MilestoneStatus),default=MilestoneStatus.PENDING); deliverable_url: Mapped[str|None]=mapped_column(String(500)); submitted_at: Mapped[datetime|None]=mapped_column(DateTime); approved_at: Mapped[datetime|None]=mapped_column(DateTime); allocation_pct: Mapped[Decimal]=mapped_column(Numeric(5,2))
+    status: Mapped[MilestoneStatus]=mapped_column(Enum(MilestoneStatus),default=MilestoneStatus.PENDING); deliverable_url: Mapped[str|None]=mapped_column(String(500)); submission_notes: Mapped[str|None]=mapped_column(Text); revision_reason: Mapped[str|None]=mapped_column(Text); submission_count: Mapped[int]=mapped_column(default=0); submitted_at: Mapped[datetime|None]=mapped_column(DateTime); approved_at: Mapped[datetime|None]=mapped_column(DateTime); allocation_pct: Mapped[Decimal]=mapped_column(Numeric(5,2))
 
 class LedgerTransaction(Base):
     __tablename__="ledger_transaction"; __table_args__=(CheckConstraint("amount >= 0 AND commission_amount >= 0 AND payout_amount >= 0",name="ck_ledger_nonnegative"),CheckConstraint("payout_amount = amount - commission_amount",name="ck_ledger_reconciles"),UniqueConstraint("milestone_id","transaction_type",name="uq_milestone_transaction_type"))
